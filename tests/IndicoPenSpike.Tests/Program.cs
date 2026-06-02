@@ -7,6 +7,7 @@ var tests = new List<(string Name, Action Run)>
     (nameof(TestStrokesGroupedByPage), TestStrokesGroupedByPage),
     (nameof(TestClearingAnnotations), TestClearingAnnotations),
     (nameof(TestUndoRedoService), TestUndoRedoService),
+    (nameof(TestEraseUndoRedo), TestEraseUndoRedo),
     (nameof(TestRedoHistoryClearedAfterNewAction), TestRedoHistoryClearedAfterNewAction),
 };
 
@@ -111,6 +112,29 @@ static void TestRedoHistoryClearedAfterNewAction()
 
     service.Push(new DelegateUndoableAction("second", undo: () => { }, redo: () => { }));
     Assert.False(service.CanRedo);
+}
+
+static void TestEraseUndoRedo()
+{
+    var document = new AnnotationDocument();
+    var stroke = CreateStroke(pageNumber: 3, xOffset: 30);
+    document.AddStroke(stroke);
+    Assert.Equal(1, document.StrokeCount);
+
+    document.RemoveStroke(stroke);
+    Assert.Equal(0, document.StrokeCount);
+
+    var service = new UndoRedoService();
+    service.Push(new DelegateUndoableAction(
+        "erase",
+        undo: () => document.AddStroke(stroke),
+        redo: () => document.RemoveStroke(stroke)));
+
+    Assert.True(service.TryUndo());
+    Assert.Equal(1, document.StrokeCount);
+
+    Assert.True(service.TryRedo());
+    Assert.Equal(0, document.StrokeCount);
 }
 
 static AnnotationStroke CreateStroke(int pageNumber, double xOffset)
