@@ -4,11 +4,13 @@ namespace IndicoPenSpike;
 
 public partial class App : Application
 {
+    private Window? _window;
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         _ = args;
 
-        var window = new MainWindow();
-        window.Activate();
+        _window = new MainWindow();
+        _window.Activate();
     }
 }
