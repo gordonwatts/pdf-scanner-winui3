@@ -1,0 +1,588 @@
+using System.Collections.Generic;
+using System.Linq;
+using IndicoPenSpike.Core.Models;
+using IndicoPenSpike.Core.UndoRedo;
+using Microsoft.UI;
+using Microsoft.UI.Input;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Shapes;
+using Windows.Data.Pdf;
+using Windows.Foundation;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
+using Windows.UI;
+
+namespace IndicoPenSpike;
+
+public sealed partial class MainWindow : Window
+{
+    private readonly AnnotationDocument _annotationDocument = new();
+    private readonly UndoRedoService _undoRedoService = new();
+    private readonly List<PageSurface> _pages = new();
+    private ToolMode _toolMode = ToolMode.Ink;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        Title = "Indico Pen Spike";
+        _annotationDocument.Changed += AnnotationDocument_Changed;
+        _undoRedoService.Changed += UndoRedoService_Changed;
+
+        SetToolMode(ToolMode.Ink);
+        ShowEmptyState();
+        UpdateStatus();
+    }
+
+    private void AnnotationDocument_Changed(object? sender, EventArgs e) => UpdateStatus();
+
+    private void UndoRedoService_Changed(object? sender, EventArgs e) => UpdateStatus();
+
+    private void UpdateStatus()
+    {
+        StrokeCountText.Text = $"{_annotationDocument.StrokeCount} strokes";
+        UndoButton.IsEnabled = _undoRedoService.CanUndo;
+        RedoButton.IsEnabled = _undoRedoService.CanRedo;
+    }
+
+    private async void OpenPdf_Click(object sender, RoutedEventArgs e)
+    {
+        await OpenPdfAsync();
+    }
+
+    private void Undo_Click(object sender, RoutedEventArgs e)
+    {
+        _undoRedoService.TryUndo();
+    }
+
+    private void Redo_Click(object sender, RoutedEventArgs e)
+    {
+        _undoRedoService.TryRedo();
+    }
+
+    private void InkModeButton_Checked(object sender, RoutedEventArgs e) => SetToolMode(ToolMode.Ink);
+
+    private void InkModeButton_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (EraserModeButton.IsChecked != true)
+        {
+            InkModeButton.IsChecked = true;
+        }
+    }
+
+    private void EraserModeButton_Checked(object sender, RoutedEventArgs e) => SetToolMode(ToolMode.Eraser);
+
+    private void EraserModeButton_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (InkModeButton.IsChecked != true)
+        {
+            EraserModeButton.IsChecked = true;
+        }
+    }
+
+    private async Task OpenPdfAsync()
+    {
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".pdf");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        await LoadPdfAsync(file);
+    }
+
+    private async Task LoadPdfAsync(StorageFile file)
+    {
+        _annotationDocument.Clear();
+        _undoRedoService.Clear();
+        _pages.Clear();
+        DocumentStack.Children.Clear();
+        EmptyStateOverlay.Visibility = Visibility.Collapsed;
+
+        var pdfDocument = await PdfDocument.LoadFromFileAsync(file);
+        var pageCount = (int)pdfDocument.PageCount;
+
+        DocumentStack.Children.Add(new TextBlock
+        {
+            Text = file.Name,
+            FontSize = 22,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12),
+            Foreground = new SolidColorBrush(Colors.Black)
+        });
+
+        for (var pageIndex = 0; pageIndex < pageCount; pageIndex++)
+        {
+            var pageNumber = pageIndex + 1;
+            using var page = pdfDocument.GetPage((uint)pageIndex);
+            var pageSurface = await CreatePageSurfaceAsync(pageNumber, page, file.Name);
+            _pages.Add(pageSurface);
+            DocumentStack.Children.Add(pageSurface.Root);
+        }
+
+        SetToolMode(_toolMode);
+        UpdateStatus();
+    }
+
+    private async Task<PageSurface> CreatePageSurfaceAsync(int pageNumber, PdfPage pdfPage, string fileName)
+    {
+        var displayWidth = Math.Max(700, DocumentScrollViewer.ActualWidth > 0 ? DocumentScrollViewer.ActualWidth - 96 : 900);
+        var aspectRatio = pdfPage.Size.Height <= 0 ? 1.0 : pdfPage.Size.Width / pdfPage.Size.Height;
+        var displayHeight = displayWidth / Math.Max(aspectRatio, 0.01);
+
+        var bitmap = new BitmapImage();
+        using (IRandomAccessStream stream = new InMemoryRandomAccessStream())
+        {
+            await pdfPage.RenderToStreamAsync(stream);
+            stream.Seek(0);
+            await bitmap.SetSourceAsync(stream);
+        }
+
+        return new PageSurface(
+            pageNumber,
+            fileName,
+            bitmap,
+            displayWidth,
+            displayHeight,
+            _annotationDocument,
+            this,
+            _toolMode,
+            HandleStrokeCommitted,
+            HandleStrokeErased);
+    }
+
+    private void HandleStrokeCommitted(PageSurface pageSurface, StrokeSet strokeSet)
+    {
+        _undoRedoService.Push(new DelegateUndoableAction(
+            $"Add stroke on page {pageSurface.PageNumber}",
+            undo: () => pageSurface.RemoveAnnotations(strokeSet.Annotations),
+            redo: () => pageSurface.AddStrokeSet(strokeSet)));
+        UpdateStatus();
+    }
+
+    private void HandleStrokeErased(PageSurface pageSurface, StrokeSet strokeSet)
+    {
+        _undoRedoService.Push(new DelegateUndoableAction(
+            $"Erase stroke on page {pageSurface.PageNumber}",
+            undo: () => pageSurface.AddStrokeSet(strokeSet),
+            redo: () => pageSurface.RemoveAnnotations(strokeSet.Annotations)));
+        UpdateStatus();
+    }
+
+    private void SetToolMode(ToolMode mode)
+    {
+        _toolMode = mode;
+        InkModeButton.IsChecked = mode == ToolMode.Ink;
+        EraserModeButton.IsChecked = mode == ToolMode.Eraser;
+
+        foreach (var page in _pages)
+        {
+            page.SetToolMode(mode);
+        }
+
+        if (_pages.Count > 0)
+        {
+            PointerStatusText.Text = $"pointer: {mode.ToString().ToLowerInvariant()}";
+        }
+    }
+
+    private void ShowEmptyState()
+    {
+        DocumentStack.Children.Clear();
+        EmptyStateOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void UpdatePointerStatus(string pointerType, int pageNumber, double pressure, ToolMode resolvedMode)
+    {
+        PointerStatusText.Text = $"pointer: {pointerType} | page: {pageNumber} | mode: {resolvedMode.ToString().ToLowerInvariant()} | pressure: {pressure:0.00}";
+    }
+
+    private enum ToolMode
+    {
+        Ink,
+        Eraser
+    }
+
+    private sealed record StrokeSet(int PageNumber, IReadOnlyList<AnnotationStroke> Annotations);
+
+    private sealed class PageSurface
+    {
+        private readonly AnnotationDocument _annotationDocument;
+        private readonly MainWindow _window;
+        private readonly Canvas _strokeLayer;
+        private readonly Dictionary<AnnotationStroke, Polyline> _visuals = new(ReferenceEqualityComparer.Instance);
+        private readonly Action<PageSurface, StrokeSet> _strokeCommitted;
+        private readonly Action<PageSurface, StrokeSet> _strokeErased;
+        private readonly List<StrokePoint> _activeStrokePoints = new();
+        private Polyline? _activeStrokeVisual;
+        private bool _isDrawing;
+        private Point _lastPointerPoint;
+
+        public PageSurface(
+            int pageNumber,
+            string fileName,
+            BitmapImage bitmap,
+            double width,
+            double height,
+            AnnotationDocument annotationDocument,
+            MainWindow window,
+            ToolMode initialMode,
+            Action<PageSurface, StrokeSet> strokeCommitted,
+            Action<PageSurface, StrokeSet> strokeErased)
+        {
+            PageNumber = pageNumber;
+            _annotationDocument = annotationDocument;
+            _window = window;
+            _strokeCommitted = strokeCommitted;
+            _strokeErased = strokeErased;
+
+            _strokeLayer = CreateStrokeLayer(width, height);
+
+            var pageHeader = new TextBlock
+            {
+                Text = pageNumber == 1 ? fileName : $"Page {pageNumber}",
+                FontSize = pageNumber == 1 ? 20 : 14,
+                Margin = new Thickness(0, 0, 0, 12),
+                Foreground = new SolidColorBrush(pageNumber == 1 ? Colors.Black : Colors.DimGray)
+            };
+
+            var pageFrame = new Border
+            {
+                Background = new SolidColorBrush(Colors.White),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x00, 0x00, 0x00)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(20),
+                Child = new Grid
+                {
+                    Width = width,
+                    Height = height,
+                    Children =
+                    {
+                        new Image
+                        {
+                            Source = bitmap,
+                            Stretch = Stretch.Fill
+                        },
+                        _strokeLayer
+                    }
+                }
+            };
+
+            Root = new Grid
+            {
+                RowDefinitions =
+                {
+                    new RowDefinition { Height = GridLength.Auto },
+                    new RowDefinition { Height = GridLength.Auto }
+                }
+            };
+
+            Grid.SetRow(pageHeader, 0);
+            Grid.SetRow(pageFrame, 1);
+            Root.Children.Add(pageHeader);
+            Root.Children.Add(pageFrame);
+
+            SetToolMode(initialMode);
+        }
+
+        public int PageNumber { get; }
+
+        public Grid Root { get; }
+
+        public void SetToolMode(ToolMode mode)
+        {
+        }
+
+        public void AddStrokeSet(StrokeSet strokeSet)
+        {
+            foreach (var annotation in strokeSet.Annotations)
+            {
+                if (_visuals.ContainsKey(annotation))
+                {
+                    continue;
+                }
+
+                var visual = CreateStrokeVisual(annotation);
+                _visuals.Add(annotation, visual);
+                _strokeLayer.Children.Add(visual);
+                _annotationDocument.AddStroke(annotation);
+            }
+        }
+
+        public void RemoveAnnotations(IReadOnlyList<AnnotationStroke> annotations)
+        {
+            var removed = new List<AnnotationStroke>();
+            foreach (var annotation in annotations)
+            {
+                if (_visuals.TryGetValue(annotation, out var visual))
+                {
+                    _strokeLayer.Children.Remove(visual);
+                    _visuals.Remove(annotation);
+                    _annotationDocument.RemoveStroke(annotation);
+                    removed.Add(annotation);
+                }
+            }
+        }
+
+        private Canvas CreateStrokeLayer(double width, double height)
+        {
+            var layer = new Canvas
+            {
+                Width = width,
+                Height = height,
+                Background = new SolidColorBrush(Colors.Transparent),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            layer.PointerPressed += OnPointerPressed;
+            layer.PointerMoved += OnPointerMoved;
+            layer.PointerReleased += OnPointerReleased;
+            layer.PointerCanceled += OnPointerCanceled;
+            layer.PointerEntered += OnPointerActivity;
+            layer.PointerExited += OnPointerActivity;
+            layer.PointerMoved += OnPointerActivity;
+            layer.PointerPressed += OnPointerActivity;
+            layer.PointerReleased += OnPointerActivity;
+            return layer;
+        }
+
+        private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(_strokeLayer);
+            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            _lastPointerPoint = point.Position;
+
+            if (ResolveMode(point) == ToolMode.Eraser)
+            {
+                EraseAtPoint(point.Position, point.PointerDeviceType, point.Properties.Pressure);
+                return;
+            }
+
+            _isDrawing = true;
+            _activeStrokePoints.Clear();
+            _activeStrokeVisual = CreateStrokeVisual(null);
+            _strokeLayer.Children.Add(_activeStrokeVisual);
+            _activeStrokeVisual.Points.Add(point.Position);
+            _activeStrokePoints.Add(new StrokePoint(point.Position.X, point.Position.Y, point.Properties.Pressure));
+            _strokeLayer.CapturePointer(e.Pointer);
+        }
+
+        private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(_strokeLayer);
+            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            {
+                return;
+            }
+
+            _lastPointerPoint = point.Position;
+
+            if (_isDrawing && _activeStrokeVisual is not null)
+            {
+                _activeStrokeVisual.Points.Add(point.Position);
+                _activeStrokePoints.Add(new StrokePoint(point.Position.X, point.Position.Y, point.Properties.Pressure));
+                e.Handled = true;
+                return;
+            }
+
+            if (ResolveMode(point) == ToolMode.Eraser && (point.Properties.IsLeftButtonPressed || point.IsInContact))
+            {
+                EraseAtPoint(point.Position, point.PointerDeviceType, point.Properties.Pressure);
+                e.Handled = true;
+            }
+        }
+
+        private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(_strokeLayer);
+            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            {
+                return;
+            }
+
+            if (_isDrawing)
+            {
+                e.Handled = true;
+                FinishStroke(e, point);
+            }
+        }
+
+        private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
+        {
+            if (_isDrawing)
+            {
+                CancelStroke();
+            }
+        }
+
+        private void OnPointerActivity(object sender, PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(_strokeLayer);
+            var pointerType = point.PointerDeviceType switch
+            {
+                PointerDeviceType.Mouse => "mouse",
+                PointerDeviceType.Pen => point.Properties.IsEraser || point.Properties.IsInverted ? "eraser" : "pen",
+                PointerDeviceType.Touch => "touch",
+                _ => "unknown"
+            };
+
+            var pressure = point.PointerDeviceType == PointerDeviceType.Pen || point.PointerDeviceType == PointerDeviceType.Mouse
+                ? point.Properties.Pressure
+                : 0;
+
+            _window.UpdatePointerStatus(pointerType, PageNumber, pressure, ResolveMode(point));
+        }
+
+        private void FinishStroke(PointerRoutedEventArgs routedEventArgs, PointerPoint point)
+        {
+            if (_activeStrokeVisual is null || _activeStrokePoints.Count == 0)
+            {
+                CancelStroke();
+                return;
+            }
+
+            _activeStrokeVisual.Points.Add(point.Position);
+            _activeStrokePoints.Add(new StrokePoint(point.Position.X, point.Position.Y, point.Properties.Pressure));
+
+            var annotation = AnnotationStroke.Create(
+                PageNumber,
+                _activeStrokePoints,
+                argbColor: 0xFF000000,
+                thickness: 3.5,
+                inputType: ResolveMode(point).ToString().ToLowerInvariant());
+
+            _strokeLayer.Children.Remove(_activeStrokeVisual);
+            _activeStrokeVisual = null;
+            _isDrawing = false;
+            _strokeLayer.ReleasePointerCapture(routedEventArgs.Pointer);
+            AddStrokeSet(new StrokeSet(PageNumber, new[] { annotation }));
+            _strokeCommitted(this, new StrokeSet(PageNumber, new[] { annotation }));
+        }
+
+        private void CancelStroke()
+        {
+            if (_activeStrokeVisual is not null)
+            {
+                _strokeLayer.Children.Remove(_activeStrokeVisual);
+            }
+
+            _activeStrokeVisual = null;
+            _activeStrokePoints.Clear();
+            _isDrawing = false;
+        }
+
+        private void EraseAtPoint(Point location, PointerDeviceType pointerType, float pressure)
+        {
+            var threshold = 14.0;
+            var toRemove = _visuals
+                .Where(pair => HitTest(pair.Key, location, threshold))
+                .Select(pair => pair.Key)
+                .ToList();
+
+            if (toRemove.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var annotation in toRemove)
+            {
+                if (_visuals.TryGetValue(annotation, out var visual))
+                {
+                    _strokeLayer.Children.Remove(visual);
+                    _visuals.Remove(annotation);
+                    _annotationDocument.RemoveStroke(annotation);
+                }
+            }
+
+            var strokeSet = new StrokeSet(PageNumber, toRemove);
+            _strokeErased(this, strokeSet);
+        }
+
+        private bool HitTest(AnnotationStroke stroke, Point point, double threshold)
+        {
+            if (stroke.Points.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < stroke.Points.Count - 1; i++)
+            {
+                var start = new Point(stroke.Points[i].X, stroke.Points[i].Y);
+                var end = new Point(stroke.Points[i + 1].X, stroke.Points[i + 1].Y);
+                if (DistanceToSegment(point, start, end) <= threshold)
+                {
+                    return true;
+                }
+            }
+
+            return stroke.Points.Any(strokePoint =>
+                Math.Sqrt(Math.Pow(point.X - strokePoint.X, 2) + Math.Pow(point.Y - strokePoint.Y, 2)) <= threshold);
+        }
+
+        private static double DistanceToSegment(Point point, Point start, Point end)
+        {
+            var dx = end.X - start.X;
+            var dy = end.Y - start.Y;
+            if (dx == 0 && dy == 0)
+            {
+                return Math.Sqrt(Math.Pow(point.X - start.X, 2) + Math.Pow(point.Y - start.Y, 2));
+            }
+
+            var t = ((point.X - start.X) * dx + (point.Y - start.Y) * dy) / (dx * dx + dy * dy);
+            t = Math.Max(0, Math.Min(1, t));
+
+            var projection = new Point(start.X + t * dx, start.Y + t * dy);
+            return Math.Sqrt(Math.Pow(point.X - projection.X, 2) + Math.Pow(point.Y - projection.Y, 2));
+        }
+
+        private ToolMode ResolveMode(PointerPoint point)
+        {
+            if (_window._toolMode == ToolMode.Eraser)
+            {
+                return ToolMode.Eraser;
+            }
+
+            return point.PointerDeviceType == PointerDeviceType.Pen && (point.Properties.IsEraser || point.Properties.IsInverted)
+                ? ToolMode.Eraser
+                : ToolMode.Ink;
+        }
+
+        private Polyline CreateStrokeVisual(AnnotationStroke? annotation)
+        {
+            var line = new Polyline
+            {
+                Stroke = new SolidColorBrush(Colors.Black),
+                StrokeThickness = annotation?.Thickness ?? 3.5,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round,
+                IsHitTestVisible = false
+            };
+
+            if (annotation is not null)
+            {
+                foreach (var strokePoint in annotation.Points)
+                {
+                    line.Points.Add(new Point(strokePoint.X, strokePoint.Y));
+                }
+            }
+
+            return line;
+        }
+    }
+}

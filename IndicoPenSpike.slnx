@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IndicoPenSpike.Core/IndicoPenSpike.Core.csproj" />
+    <Project Path="src/IndicoPenSpike/IndicoPenSpike.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IndicoPenSpike.Tests/IndicoPenSpike.Tests.csproj" />
+  </Folder>
+</Solution>
