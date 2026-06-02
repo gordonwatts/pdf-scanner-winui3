@@ -10,29 +10,15 @@
     <Grid Background="#F2F2F2">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <MenuBar>
-            <MenuBarItem Title="File">
-                <MenuFlyoutItem Text="Open PDF" Click="OpenPdf_Click" />
-            </MenuBarItem>
-            <MenuBarItem Title="Edit">
-                <MenuFlyoutItem Text="Undo" Click="Undo_Click" />
-                <MenuFlyoutItem Text="Redo" Click="Redo_Click" />
-            </MenuBarItem>
-            <MenuBarItem Title="View" />
-            <MenuBarItem Title="Window" />
-            <MenuBarItem Title="Help" />
-        </MenuBar>
-
-        <CommandBar Grid.Row="1" IsOpen="True" DefaultLabelPosition="Right" Background="#FCFCFC">
+        <CommandBar Grid.Row="0" IsOpen="True" DefaultLabelPosition="Right" Background="#FCFCFC">
             <AppBarButton x:Name="OpenButton" Icon="OpenFile" Label="Open PDF" Click="OpenPdf_Click" />
-            <AppBarToggleButton x:Name="InkModeButton" Icon="Edit" Label="Ink" IsChecked="True" Checked="InkModeButton_Checked" Unchecked="InkModeButton_Unchecked" />
-            <AppBarToggleButton x:Name="EraserModeButton" Icon="Clear" Label="Eraser" Checked="EraserModeButton_Checked" Unchecked="EraserModeButton_Unchecked" />
-            <AppBarButton x:Name="UndoButton" Icon="Undo" Label="Undo" Click="Undo_Click" IsEnabled="False" />
-            <AppBarButton x:Name="RedoButton" Icon="Redo" Label="Redo" Click="Redo_Click" IsEnabled="False" />
+            <AppBarToggleButton x:Name="InkModeButton" Icon="Edit" Label="Ink" IsChecked="True" />
+            <AppBarToggleButton x:Name="EraserModeButton" Icon="Clear" Label="Eraser" />
+            <AppBarButton x:Name="UndoButton" Icon="Undo" Label="Undo" Click="Undo_Click" />
+            <AppBarButton x:Name="RedoButton" Icon="Redo" Label="Redo" Click="Redo_Click" />
 
             <CommandBar.Content>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="20">
@@ -42,7 +28,7 @@
             </CommandBar.Content>
         </CommandBar>
 
-        <ScrollViewer Grid.Row="2" x:Name="DocumentScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#E5E5E5">
+        <ScrollViewer x:Name="DocumentScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#E5E5E5">
             <Grid>
                 <StackPanel x:Name="DocumentStack" Padding="32" Spacing="28" HorizontalAlignment="Left" />
                 <Grid x:Name="EmptyStateOverlay">
@@ -58,5 +44,6 @@
                 </Grid>
             </Grid>
         </ScrollViewer>
+
     </Grid>
 </Window>

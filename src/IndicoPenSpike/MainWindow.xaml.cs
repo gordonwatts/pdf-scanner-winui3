@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     private readonly UndoRedoService _undoRedoService = new();
     private readonly List<PageSurface> _pages = new();
     private ToolMode _toolMode = ToolMode.Ink;
+    private bool _suppressModeEvents;
 
     public MainWindow()
     {
@@ -34,8 +35,14 @@ public sealed partial class MainWindow : Window
         Title = "Indico Pen Spike";
         _annotationDocument.Changed += AnnotationDocument_Changed;
         _undoRedoService.Changed += UndoRedoService_Changed;
+        InkModeButton.Checked += InkModeButton_Checked;
+        InkModeButton.Unchecked += InkModeButton_Unchecked;
+        EraserModeButton.Checked += EraserModeButton_Checked;
+        EraserModeButton.Unchecked += EraserModeButton_Unchecked;
 
+        _suppressModeEvents = true;
         SetToolMode(ToolMode.Ink);
+        _suppressModeEvents = false;
         ShowEmptyState();
         UpdateStatus();
     }
@@ -70,6 +77,11 @@ public sealed partial class MainWindow : Window
 
     private void InkModeButton_Unchecked(object sender, RoutedEventArgs e)
     {
+        if (_suppressModeEvents)
+        {
+            return;
+        }
+
         if (EraserModeButton.IsChecked != true)
         {
             InkModeButton.IsChecked = true;
@@ -80,6 +92,11 @@ public sealed partial class MainWindow : Window
 
     private void EraserModeButton_Unchecked(object sender, RoutedEventArgs e)
     {
+        if (_suppressModeEvents)
+        {
+            return;
+        }
+
         if (InkModeButton.IsChecked != true)
         {
             EraserModeButton.IsChecked = true;
@@ -182,8 +199,10 @@ public sealed partial class MainWindow : Window
     private void SetToolMode(ToolMode mode)
     {
         _toolMode = mode;
+        _suppressModeEvents = true;
         InkModeButton.IsChecked = mode == ToolMode.Ink;
         EraserModeButton.IsChecked = mode == ToolMode.Eraser;
+        _suppressModeEvents = false;
 
         foreach (var page in _pages)
         {
