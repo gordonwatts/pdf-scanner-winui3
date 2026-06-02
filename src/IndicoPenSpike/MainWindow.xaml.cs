@@ -16,6 +16,7 @@ using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Windows.UI;
+using WinPointerDeviceType = Microsoft.UI.Input.PointerDeviceType;
 
 namespace IndicoPenSpike;
 
@@ -359,7 +360,7 @@ public sealed partial class MainWindow : Window
         private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(_strokeLayer);
-            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
                 return;
             }
@@ -385,7 +386,7 @@ public sealed partial class MainWindow : Window
         private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(_strokeLayer);
-            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
                 return;
             }
@@ -410,7 +411,7 @@ public sealed partial class MainWindow : Window
         private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(_strokeLayer);
-            if (point.PointerDeviceType == PointerDeviceType.Touch)
+            if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
                 return;
             }
@@ -435,13 +436,13 @@ public sealed partial class MainWindow : Window
             var point = e.GetCurrentPoint(_strokeLayer);
             var pointerType = point.PointerDeviceType switch
             {
-                PointerDeviceType.Mouse => "mouse",
-                PointerDeviceType.Pen => point.Properties.IsEraser || point.Properties.IsInverted ? "eraser" : "pen",
-                PointerDeviceType.Touch => "touch",
+                WinPointerDeviceType.Mouse => "mouse",
+                WinPointerDeviceType.Pen => point.Properties.IsEraser || point.Properties.IsInverted ? "eraser" : "pen",
+                WinPointerDeviceType.Touch => "touch",
                 _ => "unknown"
             };
 
-            var pressure = point.PointerDeviceType == PointerDeviceType.Pen || point.PointerDeviceType == PointerDeviceType.Mouse
+            var pressure = point.PointerDeviceType == WinPointerDeviceType.Pen || point.PointerDeviceType == WinPointerDeviceType.Mouse
                 ? point.Properties.Pressure
                 : 0;
 
@@ -486,7 +487,7 @@ public sealed partial class MainWindow : Window
             _isDrawing = false;
         }
 
-        private void EraseAtPoint(Point location, PointerDeviceType pointerType, float pressure)
+        private void EraseAtPoint(Point location, WinPointerDeviceType pointerType, float pressure)
         {
             var threshold = 14.0;
             var toRemove = _visuals
@@ -557,7 +558,7 @@ public sealed partial class MainWindow : Window
                 return ToolMode.Eraser;
             }
 
-            return point.PointerDeviceType == PointerDeviceType.Pen && (point.Properties.IsEraser || point.Properties.IsInverted)
+            return point.PointerDeviceType == WinPointerDeviceType.Pen && (point.Properties.IsEraser || point.Properties.IsInverted)
                 ? ToolMode.Eraser
                 : ToolMode.Ink;
         }
