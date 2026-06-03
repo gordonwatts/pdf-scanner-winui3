@@ -19,4 +19,17 @@
     <ProjectReference Include="..\IndicoPenSpike.Core\IndicoPenSpike.Core.csproj" />
   </ItemGroup>
 
+  <Target Name="CopyWinUIResourceArtifactsToPublishDir" AfterTargets="Publish">
+    <ItemGroup>
+      <_WinUIResourceArtifacts Include="$(TargetDir)App.xbf" Condition="Exists('$(TargetDir)App.xbf')" />
+      <_WinUIResourceArtifacts Include="$(TargetDir)MainWindow.xbf" Condition="Exists('$(TargetDir)MainWindow.xbf')" />
+      <_WinUIResourceArtifacts Include="$(TargetDir)IndicoPenSpike.pri" Condition="Exists('$(TargetDir)IndicoPenSpike.pri')" />
+    </ItemGroup>
+
+    <Copy
+      SourceFiles="@(_WinUIResourceArtifacts)"
+      DestinationFolder="$(PublishDir)"
+      SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

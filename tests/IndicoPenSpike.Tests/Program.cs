@@ -8,6 +8,7 @@ var tests = new List<(string Name, Action Run)>
     (nameof(TestClearingAnnotations), TestClearingAnnotations),
     (nameof(TestUndoRedoService), TestUndoRedoService),
     (nameof(TestEraseUndoRedo), TestEraseUndoRedo),
+    (nameof(TestStrokeHitTesting), TestStrokeHitTesting),
     (nameof(TestRedoHistoryClearedAfterNewAction), TestRedoHistoryClearedAfterNewAction),
 };
 
@@ -135,6 +136,14 @@ static void TestEraseUndoRedo()
 
     Assert.True(service.TryRedo());
     Assert.Equal(0, document.StrokeCount);
+}
+
+static void TestStrokeHitTesting()
+{
+    var stroke = CreateStroke(pageNumber: 1, xOffset: 0);
+
+    Assert.True(AnnotationHitTester.StrokeIntersectsPoint(stroke, x: 26, y: 34, threshold: 4));
+    Assert.False(AnnotationHitTester.StrokeIntersectsPoint(stroke, x: 80, y: 80, threshold: 4));
 }
 
 static AnnotationStroke CreateStroke(int pageNumber, double xOffset)

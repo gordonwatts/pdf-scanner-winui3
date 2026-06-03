@@ -226,6 +226,24 @@ public sealed partial class MainWindow : Window
         PointerStatusText.Text = $"pointer: {pointerType} | page: {pageNumber} | mode: {resolvedMode.ToString().ToLowerInvariant()} | pressure: {pressure:0.00}";
     }
 
+    internal void RunSmokeTest()
+    {
+        var pageSurface = new PageSurface(
+            pageNumber: 1,
+            fileName: "smoke-test.pdf",
+            bitmap: new BitmapImage(),
+            width: 100,
+            height: 100,
+            annotationDocument: _annotationDocument,
+            window: this,
+            initialMode: _toolMode,
+            strokeCommitted: HandleStrokeCommitted,
+            strokeErased: HandleStrokeErased);
+
+        DocumentStack.Children.Add(pageSurface.Root);
+        DocumentStack.Children.Remove(pageSurface.Root);
+    }
+
     private enum ToolMode
     {
         Ink,
@@ -243,8 +261,12 @@ public sealed partial class MainWindow : Window
         private readonly Action<PageSurface, StrokeSet> _strokeCommitted;
         private readonly Action<PageSurface, StrokeSet> _strokeErased;
         private readonly List<StrokePoint> _activeStrokePoints = new();
+        private readonly Ellipse _hoverCursor;
         private Polyline? _activeStrokeVisual;
         private bool _isDrawing;
+        private bool _isErasing;
+        private uint? _activeTouchScrollPointerId;
+        private Point _lastTouchScrollPoint;
         private Point _lastPointerPoint;
 
         public PageSurface(
@@ -266,6 +288,9 @@ public sealed partial class MainWindow : Window
             _strokeErased = strokeErased;
 
             _strokeLayer = CreateStrokeLayer(width, height);
+            _hoverCursor = CreateHoverCursor();
+            Canvas.SetZIndex(_hoverCursor, 1000);
+            _strokeLayer.Children.Add(_hoverCursor);
 
             var pageHeader = new TextBlock
             {
@@ -320,6 +345,7 @@ public sealed partial class MainWindow : Window
 
         public void SetToolMode(ToolMode mode)
         {
+            UpdateHoverCursorAppearance(mode);
         }
 
         public void AddStrokeSet(StrokeSet strokeSet)
@@ -361,15 +387,17 @@ public sealed partial class MainWindow : Window
                 Height = height,
                 Background = new SolidColorBrush(Colors.Transparent),
                 HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top
+                VerticalAlignment = VerticalAlignment.Top,
+                ManipulationMode = ManipulationModes.None
             };
 
             layer.PointerPressed += OnPointerPressed;
             layer.PointerMoved += OnPointerMoved;
             layer.PointerReleased += OnPointerReleased;
             layer.PointerCanceled += OnPointerCanceled;
+            layer.PointerCaptureLost += OnPointerCaptureLost;
             layer.PointerEntered += OnPointerActivity;
-            layer.PointerExited += OnPointerActivity;
+            layer.PointerExited += OnPointerExited;
             layer.PointerMoved += OnPointerActivity;
             layer.PointerPressed += OnPointerActivity;
             layer.PointerReleased += OnPointerActivity;
@@ -381,6 +409,13 @@ public sealed partial class MainWindow : Window
             var point = e.GetCurrentPoint(_strokeLayer);
             if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
+                BeginTouchScroll(e, point);
+                return;
+            }
+
+            TrackPointer(point);
+            if (!IsPointerDown(point) && point.PointerDeviceType != WinPointerDeviceType.Pen)
+            {
                 return;
             }
 
@@ -389,6 +424,8 @@ public sealed partial class MainWindow : Window
 
             if (ResolveMode(point) == ToolMode.Eraser)
             {
+                _isErasing = true;
+                _strokeLayer.CapturePointer(e.Pointer);
                 EraseAtPoint(point.Position, point.PointerDeviceType, point.Properties.Pressure);
                 return;
             }
@@ -407,9 +444,11 @@ public sealed partial class MainWindow : Window
             var point = e.GetCurrentPoint(_strokeLayer);
             if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
+                ContinueTouchScroll(e, point);
                 return;
             }
 
+            TrackPointer(point);
             _lastPointerPoint = point.Position;
 
             if (_isDrawing && _activeStrokeVisual is not null)
@@ -420,10 +459,13 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            if (ResolveMode(point) == ToolMode.Eraser && (point.Properties.IsLeftButtonPressed || point.IsInContact))
+            if (_isErasing)
             {
-                EraseAtPoint(point.Position, point.PointerDeviceType, point.Properties.Pressure);
                 e.Handled = true;
+                if (IsPointerDown(point) || point.PointerDeviceType == WinPointerDeviceType.Pen)
+                {
+                    EraseAtPoint(point.Position, point.PointerDeviceType, point.Properties.Pressure);
+                }
             }
         }
 
@@ -432,27 +474,62 @@ public sealed partial class MainWindow : Window
             var point = e.GetCurrentPoint(_strokeLayer);
             if (point.PointerDeviceType == WinPointerDeviceType.Touch)
             {
+                EndTouchScroll(e, point);
                 return;
             }
 
+            TrackPointer(point);
             if (_isDrawing)
             {
                 e.Handled = true;
                 FinishStroke(e, point);
+                return;
+            }
+
+            if (_isErasing)
+            {
+                e.Handled = true;
+                _isErasing = false;
+                _strokeLayer.ReleasePointerCapture(e.Pointer);
             }
         }
 
         private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
         {
+            var point = e.GetCurrentPoint(_strokeLayer);
+            if (point.PointerDeviceType == WinPointerDeviceType.Touch)
+            {
+                EndTouchScroll(e, point);
+                return;
+            }
+
             if (_isDrawing)
             {
                 CancelStroke();
             }
+
+            if (_isErasing)
+            {
+                _isErasing = false;
+                _strokeLayer.ReleasePointerCapture(e.Pointer);
+            }
+        }
+
+        private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+        {
+            CancelStroke();
+            _isErasing = false;
+            _activeTouchScrollPointerId = null;
         }
 
         private void OnPointerActivity(object sender, PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(_strokeLayer);
+            if (point.PointerDeviceType != WinPointerDeviceType.Touch)
+            {
+                TrackPointer(point);
+            }
+
             var pointerType = point.PointerDeviceType switch
             {
                 WinPointerDeviceType.Mouse => "mouse",
@@ -466,6 +543,11 @@ public sealed partial class MainWindow : Window
                 : 0;
 
             _window.UpdatePointerStatus(pointerType, PageNumber, pressure, ResolveMode(point));
+        }
+
+        private void OnPointerExited(object sender, PointerRoutedEventArgs e)
+        {
+            _hoverCursor.Visibility = Visibility.Collapsed;
         }
 
         private void FinishStroke(PointerRoutedEventArgs routedEventArgs, PointerPoint point)
@@ -510,7 +592,7 @@ public sealed partial class MainWindow : Window
         {
             var threshold = 14.0;
             var toRemove = _visuals
-                .Where(pair => HitTest(pair.Key, location, threshold))
+                .Where(pair => AnnotationHitTester.StrokeIntersectsPoint(pair.Key, location.X, location.Y, threshold))
                 .Select(pair => pair.Key)
                 .ToList();
 
@@ -533,41 +615,53 @@ public sealed partial class MainWindow : Window
             _strokeErased(this, strokeSet);
         }
 
-        private bool HitTest(AnnotationStroke stroke, Point point, double threshold)
+        private void BeginTouchScroll(PointerRoutedEventArgs routedEventArgs, PointerPoint point)
         {
-            if (stroke.Points.Count == 0)
+            if (_activeTouchScrollPointerId is not null)
             {
-                return false;
+                return;
             }
 
-            for (var i = 0; i < stroke.Points.Count - 1; i++)
-            {
-                var start = new Point(stroke.Points[i].X, stroke.Points[i].Y);
-                var end = new Point(stroke.Points[i + 1].X, stroke.Points[i + 1].Y);
-                if (DistanceToSegment(point, start, end) <= threshold)
-                {
-                    return true;
-                }
-            }
-
-            return stroke.Points.Any(strokePoint =>
-                Math.Sqrt(Math.Pow(point.X - strokePoint.X, 2) + Math.Pow(point.Y - strokePoint.Y, 2)) <= threshold);
+            _activeTouchScrollPointerId = point.PointerId;
+            _lastTouchScrollPoint = routedEventArgs.GetCurrentPoint(_window.DocumentScrollViewer).Position;
+            _strokeLayer.CapturePointer(routedEventArgs.Pointer);
+            routedEventArgs.Handled = true;
+            _window.UpdatePointerStatus("touch", PageNumber, pressure: 0, ResolveMode(point));
         }
 
-        private static double DistanceToSegment(Point point, Point start, Point end)
+        private void ContinueTouchScroll(PointerRoutedEventArgs routedEventArgs, PointerPoint point)
         {
-            var dx = end.X - start.X;
-            var dy = end.Y - start.Y;
-            if (dx == 0 && dy == 0)
+            if (_activeTouchScrollPointerId != point.PointerId)
             {
-                return Math.Sqrt(Math.Pow(point.X - start.X, 2) + Math.Pow(point.Y - start.Y, 2));
+                return;
             }
 
-            var t = ((point.X - start.X) * dx + (point.Y - start.Y) * dy) / (dx * dx + dy * dy);
-            t = Math.Max(0, Math.Min(1, t));
+            var currentPoint = routedEventArgs.GetCurrentPoint(_window.DocumentScrollViewer).Position;
+            var deltaX = currentPoint.X - _lastTouchScrollPoint.X;
+            var deltaY = currentPoint.Y - _lastTouchScrollPoint.Y;
+            _lastTouchScrollPoint = currentPoint;
 
-            var projection = new Point(start.X + t * dx, start.Y + t * dy);
-            return Math.Sqrt(Math.Pow(point.X - projection.X, 2) + Math.Pow(point.Y - projection.Y, 2));
+            _window.DocumentScrollViewer.ChangeView(
+                _window.DocumentScrollViewer.HorizontalOffset - deltaX,
+                _window.DocumentScrollViewer.VerticalOffset - deltaY,
+                zoomFactor: null,
+                disableAnimation: true);
+
+            routedEventArgs.Handled = true;
+            _window.UpdatePointerStatus("touch", PageNumber, pressure: 0, ResolveMode(point));
+        }
+
+        private void EndTouchScroll(PointerRoutedEventArgs routedEventArgs, PointerPoint point)
+        {
+            if (_activeTouchScrollPointerId != point.PointerId)
+            {
+                return;
+            }
+
+            _activeTouchScrollPointerId = null;
+            _strokeLayer.ReleasePointerCapture(routedEventArgs.Pointer);
+            routedEventArgs.Handled = true;
+            _window.UpdatePointerStatus("touch", PageNumber, pressure: 0, ResolveMode(point));
         }
 
         private ToolMode ResolveMode(PointerPoint point)
@@ -581,6 +675,57 @@ public sealed partial class MainWindow : Window
                 ? ToolMode.Eraser
                 : ToolMode.Ink;
         }
+
+        private void TrackPointer(PointerPoint point)
+        {
+            UpdateHoverCursorAppearance(ResolveMode(point));
+
+            var cursorSize = _hoverCursor.Width;
+            Canvas.SetLeft(_hoverCursor, point.Position.X - cursorSize / 2);
+            Canvas.SetTop(_hoverCursor, point.Position.Y - cursorSize / 2);
+            _hoverCursor.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateHoverCursorAppearance(ToolMode mode)
+        {
+            if (_hoverCursor is null)
+            {
+                return;
+            }
+
+            if (mode == ToolMode.Eraser)
+            {
+                _hoverCursor.Width = 22;
+                _hoverCursor.Height = 22;
+                _hoverCursor.Fill = new SolidColorBrush(Colors.Transparent);
+                _hoverCursor.Stroke = new SolidColorBrush(Colors.DimGray);
+                _hoverCursor.StrokeThickness = 2;
+                return;
+            }
+
+            _hoverCursor.Width = 8;
+            _hoverCursor.Height = 8;
+            _hoverCursor.Fill = new SolidColorBrush(Colors.Black);
+            _hoverCursor.Stroke = new SolidColorBrush(Colors.White);
+            _hoverCursor.StrokeThickness = 1;
+        }
+
+        private static Ellipse CreateHoverCursor() =>
+            new()
+            {
+                Width = 8,
+                Height = 8,
+                Fill = new SolidColorBrush(Colors.Black),
+                Stroke = new SolidColorBrush(Colors.White),
+                StrokeThickness = 1,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed
+            };
+
+        private static bool IsPointerDown(PointerPoint point) =>
+            point.PointerDeviceType == WinPointerDeviceType.Mouse
+                ? point.Properties.IsLeftButtonPressed
+                : point.IsInContact || point.Properties.Pressure > 0;
 
         private Polyline CreateStrokeVisual(AnnotationStroke? annotation)
         {
