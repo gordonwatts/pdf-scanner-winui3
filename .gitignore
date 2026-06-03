@@ -1,3 +1,4 @@
 .nuget-local/
 bin/
 obj/
+.vs/

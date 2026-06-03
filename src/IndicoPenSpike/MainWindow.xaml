@@ -10,10 +10,17 @@
     <Grid Background="#F2F2F2">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <CommandBar Grid.Row="0" IsOpen="True" DefaultLabelPosition="Right" Background="#FCFCFC">
+        <MenuBar Grid.Row="0">
+            <MenuBarItem Title="File">
+                <MenuFlyoutItem Text="Open PDF" Click="OpenPdf_Click" />
+            </MenuBarItem>
+        </MenuBar>
+
+        <CommandBar Grid.Row="1" IsOpen="True" DefaultLabelPosition="Right" Background="#FCFCFC">
             <AppBarButton x:Name="OpenButton" Icon="OpenFile" Label="Open PDF" Click="OpenPdf_Click" />
             <AppBarToggleButton x:Name="InkModeButton" Icon="Edit" Label="Ink" IsChecked="True" />
             <AppBarToggleButton x:Name="EraserModeButton" Icon="Clear" Label="Eraser" />
@@ -28,7 +35,7 @@
             </CommandBar.Content>
         </CommandBar>
 
-        <ScrollViewer x:Name="DocumentScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#E5E5E5">
+        <ScrollViewer x:Name="DocumentScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#E5E5E5">
             <Grid>
                 <StackPanel x:Name="DocumentStack" Padding="32" Spacing="28" HorizontalAlignment="Left" />
                 <Grid x:Name="EmptyStateOverlay">
